@@ -10,3 +10,5 @@ The projects:
 5. Product-Level Analysis:Analyze sales, build product-level conversion funnels, learn about cross-selling, and measure the impact of launching new products
 6. User-Level Analysis:Learn about behaviors of repeat visitors and purchasers, and compare new and repeat visitor website conversion patterns
 7. Big projects
+
+Liangjiayi Wang
