@@ -18,7 +18,6 @@ SELECT website_sessions.utm_content,
 FROM website_sessions
 	LEFT JOIN orders
 		ON orders.website_session_id=website_sessions.website_session_id
-        
 WHERE website_sessions.website_session_id BETWEEN 1000 AND 2000
 GROUP BY 1
 ORDER BY 2 DESC;
@@ -57,7 +56,7 @@ SELECT order_id, primary_product_id, items_purchased,created_at FROM orders WHER
 
 SELECT primary_product_id,
 COUNT(DISTINCT CASE WHEN items_purchased =1 THEN order_id ELSE NULL END) AS orders_w_1_item,
-COUNT(DISTINCT CASE WHEN items_purchased =2 THEN order_id ELSE NULL END) AS orders_w_1_item,
+COUNT(DISTINCT CASE WHEN items_purchased =2 THEN order_id ELSE NULL END) AS orders_w_2_item,
 COUNT(DISTINCT order_id) AS total_orders
 FROM orders
 WHERE order_id BETWEEN 31000 AND 32000
@@ -66,17 +65,8 @@ GROUP BY 1;
 SELECT 
 -- year(created_at) as created_yr,
 -- week(created_at) as created_wk,
-MIN(DATE(created_at)) AS week_start_date,
-COUNT(DISTINCT website_session_id) AS sessions
-FROM website_sessions
-WHERE utm_source='gsearch' AND created_at < '2012-05-10' AND utm_campaign='nonbrand'
--- group by 1,2;
-GROUP BY YEARWEEK(created_at); #每一周的最小的那一天
-
-SELECT 
--- year(created_at) as created_yr,
--- week(created_at) as created_wk,
-MIN(DATE(created_at)) AS week_start_date,
+YEARWEEK(created_at),
+MIN(DATE(created_at)) AS week_start_date, 
 COUNT(DISTINCT website_session_id) AS sessions
 FROM website_sessions
 WHERE utm_source='gsearch' AND created_at < '2012-05-10' AND utm_campaign='nonbrand'
@@ -127,7 +117,6 @@ FROM website_pageviews
 WHERE website_pageview_id < 1000
 GROUP BY 1;  -- 第一次出现一个session_id时对应的pageview_id
 
-
 select 
 website_pageviews.pageview_url as landing_page,-- aka 'entry page'
 count(distinct first_pageview.website_session_id) as sessions_hitiing_this_lander
@@ -167,7 +156,7 @@ GROUP BY website_pageviews.pageview_url;
 --
 -- Landing page performace & testing 
 --
--- Business context: we want to see landing ppage performance for a certain time period
+-- Business context: we want to see landing page performance for a certain time period
 -- STEP 1 : find the first website_pageview_id for relevant sessions
 -- STEP 2 : identify the landing page of each session
 -- STEP 3 : counting pageviews for each session, to identify 'bounces'
@@ -175,6 +164,7 @@ GROUP BY website_pageviews.pageview_url;
 -- STEP 4 : summarizing total sessions and bounced sessions, by Landing page
 
 -- finding the minuimum website pageview id associated with each session we care about
+-- 找出每一个session id 对应的最小的pageview_id（找到进入页）
 SELECT 
 Website_pageviews.website_session_id,
 MIN(Website_pageviews.website_pageview_id) AS min_pageview_id
@@ -202,6 +192,7 @@ website_pageviews.website_session_id;
 SELECT * FROM first_pageviews_demo;
 
 -- next, we'll bring in the landing page in each session
+-- 找到每一个人的第一个进入页
 CREATE TEMPORARY TABLE sessions_w_landing_page_demo
 SELECT 
 	first_pageviews_demo.website_session_id,
@@ -216,20 +207,17 @@ SELECT * FROM sessions_w_landing_page_demo;
 
 -- first,i'll show you all of the sessions.then we will limit to bounced sessions and create a temp table
 -- 计算一下每一个session id用了几个网页，i.e.对应了几个pageview id
-CREATE TEMPORARY TABLE bounced_sessions_only
+-- CREATE TEMPORARY TABLE bounced_sessions_only
 SELECT
 sessions_w_landing_page_demo.website_session_id,
 sessions_w_landing_page_demo.landing_page,
 COUNT(website_pageviews.website_pageview_id) AS count_of_pages_viewed
-
 FROM sessions_w_landing_page_demo
 LEFT JOIN website_pageviews
 ON website_pageviews.website_session_id=sessions_w_landing_page_demo.website_session_id
-
 GROUP BY 
 sessions_w_landing_page_demo.website_session_id,
 sessions_w_landing_page_demo.landing_page
-
 HAVING 
 COUNT(website_pageviews.website_pageview_id)=1;
 
@@ -438,7 +426,7 @@ Select
 	min(date(session_created_at)) as week_start_date,
     count(Distinct website_session_id) as total_sessions,
     count(distinct case when count_pageviews=1 then website_session_id else null end) as bounced_sessions,
-    count(distinct case when count_pageviews=1 then website_session_id else null end)*1.0/count(distinct website_session_id) as bounced_sessions,
+    count(distinct case when count_pageviews=1 then website_session_id else null end)*1.0/count(distinct website_session_id) as bounced_rate,
     count(distinct case when landing_page='/home' then website_session_id else null end) as home_sessions,
     count(distinct case when landing_page='/lander-1' then website_session_id else null end) as lander_sessions
 from B
@@ -468,7 +456,7 @@ Select * from website_pageviews where website_session_id=1059;
 -- first I will show you all of the pageviews we care about
 -- then, I will remove the comments from my flag columns one by one show you what that looks like 
 
-
+-- 把一个session_id 的所有网页log 标记为1和0 
 SELECT 
 ws.website_session_id,
 wp.pageview_url,
@@ -488,7 +476,7 @@ wp.created_at;
 -- next we will put the previous query inside a subquery 
 -- we will group by website_session_id, and take the max() of each of the flags
 -- this max() becomes a made_it flag for that session, to show the session made it there
-
+-- 把一个session_id 的所有网页log 标记为1和0 并总结到一行
 create temporary table session_level_made_it_flags_down
 select 
 website_session_id,
@@ -534,8 +522,8 @@ from session_level_made_it_flags_down;
 Select 
 	count(Distinct website_session_id) as sessions,
     count(distinct case when product_made_it=1 then website_session_id else null end)/count(Distinct website_session_id) as clicked_to_products,
-    count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end)/count(Distinct website_session_id) as clicked_to_mrfuzzy,
-    count(distinct case when cart_made_it=1 then website_session_id else null end)/count(Distinct website_session_id) as clicked_to_cart
+    count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end)/count(distinct case when product_made_it=1 then website_session_id else null end)as clicked_to_mrfuzzy,
+    count(distinct case when cart_made_it=1 then website_session_id else null end)/ count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end) as clicked_to_cart
 from session_level_made_it_flags_down;
 
 
@@ -579,7 +567,7 @@ from (
 	wp.pageview_url) as pageview_level
 group by website_session_id;
 
-
+select * from session_level;
 
 
 Select 
@@ -597,17 +585,18 @@ Select
 count(distinct website_session_id) as total_sessions,
 -- sum(lander_made_it)/count(distinct website_session_id) as to_lander_rate,
 sum(product_made_it)/count(distinct website_session_id) as to_landerclick_rate, -- 点击了lander的rate lander 点击了就进入了products
-count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end)/count(distinct website_session_id) as to_mrfuzzy_rate,
-count(distinct case when cart_made_it=1 then website_session_id else null end)/count(distinct website_session_id) as to_cart_rate, 
-count(distinct case when shipping_made_it=1 then website_session_id else null end)/count(distinct website_session_id) as to_shipping_rate, 
-count(distinct case when billing_made_it=1 then website_session_id else null end)/count(distinct website_session_id) as to_billing_rate,
-count(distinct case when thankyou_made_it=1 then website_session_id else null end)/count(distinct website_session_id) as to_thankyou_rate
+count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end)/sum(product_made_it) as to_mrfuzzy_rate,
+count(distinct case when cart_made_it=1 then website_session_id else null end)/count(distinct case when mrfuzzy_made_it=1 then website_session_id else null end) as to_cart_rate, 
+count(distinct case when shipping_made_it=1 then website_session_id else null end)/count(distinct case when cart_made_it=1 then website_session_id else null end)as to_shipping_rate, 
+count(distinct case when billing_made_it=1 then website_session_id else null end)/count(distinct case when shipping_made_it=1 then website_session_id else null end)as to_billing_rate,
+count(distinct case when thankyou_made_it=1 then website_session_id else null end)/count(distinct case when billing_made_it=1 then website_session_id else null end) as to_thankyou_rate
 from session_level;
 
 Select 
 sum(lander_made_it) from session_level;
 
 -- Analyzing conversion funnel test
+
 select 
 min(created_at) as first_created_at,
 min(website_pageview_id) as first_pageview_id
@@ -638,6 +627,8 @@ from (
 	wp.website_session_id,
 	wp.pageview_url) as billing_sessions_w_order
 group by pageview_url;
+
+select * from session_level;
 
 Select 
 		wp.website_session_id,
