@@ -647,12 +647,181 @@ Select
 -- So here you see for some of the sessions, there is an order ID and then for some of the sessions it's null because no order was placed.
 
 
+-- 
+-- Channel portfolio analysis
+-- 
+SELECT utm_content, 
+COUNT(DISTINCT ws.website_session_id) AS sessions,
+COUNT(DISTINCT orders.order_id) AS orders,
+COUNT(DISTINCT orders.order_id)/COUNT(DISTINCT ws.website_session_id)  as sessions_to_order_cvr
+FROM website_sessions AS ws
+	LEFT JOIN orders 
+	ON orders.website_session_id=ws.website_session_id
+WHERE ws.created_at BETWEEN '2014-01-01' AND '2014-02-01'
+GROUP BY 1
+ORDER BY sessions DESC;
+
+SELECT 
+MIN(DATE(created_at)) AS week_start_date,
+COUNT(CASE WHEN utm_source='gsearch' THEN website_session_id ELSE NULL END) AS gsearch_sessions,
+COUNT(CASE WHEN utm_source='bsearch' THEN website_session_id ELSE NULL END) AS bsearch_sessions
+FROM website_sessions
+WHERE created_at > '2012-08-22' 
+AND created_at <'2012-11-29'
+AND utm_campaign='nonbrand'
+GROUP BY YEARWEEK(created_at);
+
+SELECT utm_source,
+COUNT(website_session_id) AS sessions,
+COUNT(CASE WHEN device_type='mobile' THEN website_session_id ELSE NULL END) AS mobile_sessions,
+COUNT(CASE WHEN device_type='mobile' THEN website_session_id ELSE NULL END) /COUNT(website_session_id) AS mob_pct
+FROM website_sessions
+WHERE created_at > '2012-08-22' 
+AND created_at <'2012-11-30'
+AND utm_campaign='nonbrand'
+GROUP BY 1;
+
+
+SELECT ws.device_type,ws.utm_source,
+COUNT(ws.website_session_id) AS sessions,
+count(orders.order_id) as orders,
+count(orders.order_id)/COUNT(ws.website_session_id) as cov_rate
+FROM website_sessions as ws
+	left join orders
+	ON orders.website_session_id=ws.website_session_id
+WHERE ws.created_at > '2012-08-22' 
+AND ws.created_at <'2012-09-19'
+AND ws.utm_campaign='nonbrand'
+GROUP BY 1,2;
+
+select 
+MIN(DATE(created_at)) AS week_start_date,
+COUNT(CASE WHEN device_type='desktop' and utm_source='gsearch' THEN website_session_id ELSE NULL END) AS g_dtop_sessions,
+COUNT(CASE WHEN device_type='desktop' and utm_source='bsearch' THEN website_session_id ELSE NULL END) AS b_dtop_sessions,
+COUNT(CASE WHEN device_type='desktop' and utm_source='bsearch' THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN device_type='desktop' and utm_source='gsearch' THEN website_session_id ELSE NULL END)  as b_pct_of_g_dtop,
+COUNT(CASE WHEN device_type='mobile' and utm_source='gsearch' THEN website_session_id ELSE NULL END) AS g_mob_sessions,
+COUNT(CASE WHEN device_type='mobile' and utm_source='bsearch' THEN website_session_id ELSE NULL END) AS b_mob_sessions,
+COUNT(CASE WHEN device_type='mobile' and utm_source='bsearch' THEN website_session_id ELSE NULL END)/COUNT(CASE WHEN device_type='mobile' and utm_source='gsearch' THEN website_session_id ELSE NULL END)  as b_pct_of_g_mob
+from website_sessions
+WHERE created_at > '2012-11-04' 
+AND created_at <'2012-12-22'
+AND utm_campaign='nonbrand'
+group by yearweek(created_at);
+
+
+
+--
+-- Analyzing direct traffic
+-- 
+
+SELECT 
+CASE 
+	WHEN http_referer IS NULL THEN 'direct_type_in'
+	WHEN http_referer='https://www.gsearch.com' AND utm_source IS NULL THEN 'gsearch_organic'
+    WHEN http_referer='https://www.bsearch.com' AND utm_source IS NULL THEN 'bsearch_organic'
+    ELSE 'other'
+    END AS Type1,
+COUNT(DISTINCT website_session_id) AS sessions
+FROM website_sessions
+WHERE website_session_id BETWEEN 100000 AND 115000
+	-- AND utm_source IS NULL
+GROUP BY 1;
 
 
 
 
 
+SELECT YEAR(created_at) AS yr,
+MONTH(created_at) AS mo,
+COUNT(CASE WHEN channel_group='paid_nonbrand' THEN website_session_id END) AS nonbrand,
+COUNT(CASE WHEN channel_group='paid_brand' THEN website_session_id END) AS brand,
+COUNT(CASE WHEN channel_group='paid_brand' THEN website_session_id END)/COUNT(CASE WHEN channel_group='paid_nonbrand' THEN website_session_id END) AS brand_pct_of_nonbrand,
+COUNT(CASE WHEN channel_group='direct_type_in' THEN website_session_id END) AS direct,
+COUNT(CASE WHEN channel_group='direct_type_in' THEN website_session_id END)/COUNT(CASE WHEN channel_group='paid_nonbrand' THEN website_session_id END) AS direct_pct_of_nonbrand,
+COUNT(CASE WHEN channel_group='organic' THEN website_session_id END) AS organic,
+COUNT(CASE WHEN channel_group='organic' THEN website_session_id END)/COUNT(CASE WHEN channel_group='paid_nonbrand' THEN website_session_id END) AS organic_pct_of_nonbrand 
+FROM
+(
+SELECT 
+created_at,
+website_session_id,
+CASE 
+	WHEN utm_source IS NULL AND http_referer IS NULL THEN 'direct_type_in'
+	WHEN utm_source IS NULL AND http_referer IN ('https://www.gsearch.com','https://www.bsearch.com') THEN 'organic'
+    WHEN utm_campaign = 'nonbrand' THEN 'paid_nonbrand'
+    WHEN utm_campaign = 'brand' THEN 'paid_brand'
+    END AS channel_group
+FROM website_sessions
+WHERE created_at<'2012-12-23') AS sessions_w_channel_group
+GROUP BY 
+	YEAR(created_at),
+	MONTH(created_at);
+
+-- So it looks like the organic search is picking up and it seems to be growing faster than non brand
+-- Not only is direct, organic and brand search growing, but it's also growing as a percentage of paid traffic overall
 
 
+--
+-- Seaonality & business patterns
+--
+SELECT
+website_session_id,
+created_at,
+HOUR(created_at) AS hr,
+WEEKDAY(created_at) AS wkday, -- 0=mon,1=tues
+QUARTER(created_at) AS qtr,
+MONTH(created_at) AS mo,
+DATE(created_at) AS date,
+WEEK(created_at) AS wk
+FROM website_sessions
+WHERE website_session_id BETWEEN 150000 AND 155000;
+
+SELECT
+YEAR(ws.created_at),
+MONTH(ws.created_at),
+COUNT(ws.website_session_id) AS sessions,
+COUNT(orders.order_id) AS orders
+FROM website_sessions AS ws
+LEFT JOIN orders ON orders.website_session_id=ws.website_session_id
+WHERE ws.created_at<'2013-01-01'
+GROUP BY 1,2;
+
+SELECT
+MIN(DATE(ws.created_at)) AS week_start_date,
+COUNT(ws.website_session_id) AS sessions,
+COUNT(orders.order_id) AS orders
+FROM website_sessions AS ws
+LEFT JOIN orders ON orders.website_session_id=ws.website_session_id
+WHERE ws.created_at<'2013-01-01'
+GROUP BY YEARWEEK(ws.created_at);
 
 
+Select 
+DATE(created_at) AS created_date,
+weekday(created_at) as wkday,
+HOUR(created_at) as hr,
+count(distinct website_session_id) as sessions
+FROM website_sessions 
+WHERE created_at between '2012-09-15' and '2012-11-15'
+group by 1,2,3;
+
+Select
+hr,
+round(avg(case when wkday=0 then sessions end),1) as mon,
+round(avg(case when wkday=1 then sessions end),1) as tue,
+round(avg(case when wkday=2 then sessions end),1) as wed,
+round(avg(case when wkday=3 then sessions end),1) as thu,
+round(avg(case when wkday=4 then sessions end),1) as fir,
+round(avg(case when wkday=5 then sessions end),1) as sat,
+round(avg(case when wkday=6 then sessions end),1) as sun
+from(
+Select 
+DATE(created_at) AS created_date,
+weekday(created_at) as wkday,
+HOUR(created_at) as hr,
+count(distinct website_session_id) as sessions
+FROM website_sessions 
+WHERE created_at between '2012-09-15' and '2012-11-15'
+group by 1,2,3
+) as daily_hourly_sessions
+group by daily_hourly_sessions.hr;
