@@ -4,6 +4,11 @@ SELECT * FROM website_sessions;
 SELECT * FROM website_pageviews;
 -- ORDERS
 SELECT * FROM orders;
+-- ORDER ITEMS
+SELECT * FROM order_items;
+-- ORDER refunds
+SELECT * FROM order_item_refunds;
+
 
 --
 -- Traffic Source Analysis
@@ -796,32 +801,564 @@ WHERE ws.created_at<'2013-01-01'
 GROUP BY YEARWEEK(ws.created_at);
 
 
-Select 
+SELECT 
 DATE(created_at) AS created_date,
-weekday(created_at) as wkday,
-HOUR(created_at) as hr,
-count(distinct website_session_id) as sessions
+WEEKDAY(created_at) AS wkday,
+HOUR(created_at) AS hr,
+COUNT(DISTINCT website_session_id) AS sessions
 FROM website_sessions 
-WHERE created_at between '2012-09-15' and '2012-11-15'
-group by 1,2,3;
+WHERE created_at BETWEEN '2012-09-15' AND '2012-11-15'
+GROUP BY 1,2,3;
+
+SELECT
+hr,
+ROUND(AVG(CASE WHEN wkday=0 THEN sessions END),1) AS mon,
+ROUND(AVG(CASE WHEN wkday=1 THEN sessions END),1) AS tue,
+ROUND(AVG(CASE WHEN wkday=2 THEN sessions END),1) AS wed,
+ROUND(AVG(CASE WHEN wkday=3 THEN sessions END),1) AS thu,
+ROUND(AVG(CASE WHEN wkday=4 THEN sessions END),1) AS fir,
+ROUND(AVG(CASE WHEN wkday=5 THEN sessions END),1) AS sat,
+ROUND(AVG(CASE WHEN wkday=6 THEN sessions END),1) AS sun
+FROM(
+SELECT 
+DATE(created_at) AS created_date,
+WEEKDAY(created_at) AS wkday,
+HOUR(created_at) AS hr,
+COUNT(DISTINCT website_session_id) AS sessions
+FROM website_sessions 
+WHERE created_at BETWEEN '2012-09-15' AND '2012-11-15'
+GROUP BY 1,2,3
+) AS daily_hourly_sessions
+GROUP BY daily_hourly_sessions.hr;
+
+--
+-- Product sales analysis
+--
+
+SELECT
+	primary_product_id,
+	COUNT(order_id) AS orders,
+    SUM(price_usd) AS revenue,
+    SUM(price_usd-cogs_usd) AS margin,
+    AVG(price_usd) AS aov
+FROM orders
+WHERE order_id BETWEEN 10000 AND 11000
+GROUP BY 1;
+
+SELECT
+YEAR(created_at),
+MONTH(created_at),
+COUNT(order_id) AS orders,
+SUM(price_usd) AS total_revenue,
+SUM(price_usd-cogs_usd) AS margin
+FROM orders
+WHERE created_at <'2013-01-04'
+GROUP BY 1,2;
+
+
+SELECT
+YEAR(ws.created_at),
+MONTH(ws.created_at),
+COUNT(distinct o.order_id) AS number_of_sales,
+COUNT(distinct o.order_id)/count(distinct ws.website_session_id) as conv,
+SUM(o.price_usd)/count(distinct ws.website_session_id) AS revenue_per_session,
+count(case when o.primary_product_id=1 then o.order_id end) as product_one_orders,
+count(case when o.primary_product_id=2 then o.order_id end) as product_two_orders
+FROM website_sessions as ws
+left join orders as o 
+on ws.website_session_id = o.website_session_id
+WHERE ws.created_at between '2012-04-01' and  '2013-04-05'
+GROUP BY 1,2; 
+
+
+
+--
+-- product level website analysis
+--
+
+
+-- step 1: find the relevant/ products pageviews with website_session_id
+-- step 2: find the next pageview id that occurs after the product pageview
+-- step 3: find the pageview_url associated with any applicable next pageview_id
+-- step 4: summarize the data and analyze the pre vs post periods
+
+SELECT DISTINCT pageview_url
+FROM website_pageviews
+WHERE created_at BETWEEN '2013-02-01' AND '2013-03-01';
+
+SELECT 
+website_session_id,
+pageview_url
+FROM website_pageviews
+WHERE created_at BETWEEN '2013-02-01' AND '2013-03-01'
+AND pageview_url IN ('/the-original-mr-fuzzy','/the-forever-love-bear');
+
+
+SELECT 
+	website_pageviews.pageview_url,
+    COUNT(DISTINCT website_pageviews.website_session_id) AS sessions,
+    COUNT(DISTINCT orders.order_id) AS orders,
+    COUNT(DISTINCT orders.order_id)/COUNT(DISTINCT website_pageviews.website_session_id) AS viewed_product_to_order
+FROM website_pageviews
+	LEFT JOIN orders
+		ON orders.website_session_id = website_pageviews.website_session_id
+WHERE website_pageviews.created_at BETWEEN '2013-02-01' AND '2013-03-01'
+	AND website_pageviews.pageview_url IN ('/the-original-mr-fuzzy','/the-forever-love-bear')
+GROUP BY 1;
+
+
+-- p141
+
+-- step 1: find the relevant /products pageviews with website_session_id
+drop temporary table pp;
+create temporary table pp -- product_pageviews
+Select
+	website_pageview_id,
+    website_session_id,
+    created_at,
+    case when created_at<'2013-01-06' then 'A.Pre_Product_2'
+		 when created_at>='2013-01-06' then 'B.Post_Product_2'
+         else 'uh oh .. check logic'
+         end as time_period
+from website_pageviews
+where created_at<'2013-04-06' -- date of request
+	and created_at>'2012-10-06' -- start of 3 mo before product 2 launch(2013-01-06)
+    and pageview_url = '/products';
+    
+-- step 2: find the next pageview id that occurs after the product pageview
+drop temporary table sessions_w_next_pageview_id;
+Create temporary table sessions_w_next_pageview_id
+select 
+	pp.time_period,
+    pp.website_session_id,
+    min(wp.website_pageview_id) as min_next_pageview_id
+from pp
+	left join website_pageviews as wp
+    on wp.website_session_id=pp.website_session_id
+    and wp.website_pageview_id > pp.website_pageview_id 
+    -- And we've got a restriction here that when we do our join, not only does Website session I.D. you have to match, 
+    -- but the Website pageviews.Website pageview I.D. must be greater than the product page view.
+	-- So this is saying that we're only going to do our join for page use that happened after the products pageviw
+group by 1,2;
+
+	-- And you see that some of them are null because the person just abandoned on the products page and didn't
+	-- see another page.
+    
+-- step 3: find the pageview_url associated with any applicable next pageview id
+DROP temporary table sessions_w_next_pageview_url;
+create temporary table sessions_w_next_pageview_url
+select 
+	sessions_w_next_pageview_id.time_period,
+    sessions_w_next_pageview_id.website_session_id,
+    wp.pageview_url as next_pageview_url
+from sessions_w_next_pageview_id
+	left join website_pageviews as wp
+		on wp.website_pageview_id = sessions_w_next_pageview_id.min_next_pageview_id;
+        
+-- just to show the distinct next pageview urls
+-- select distinct next_pageview_url from sessions_w_next_pageview_url
+
+-- step 4:summarize the data and analyze the pre and post periods
+select
+	time_period,
+    count(distinct website_session_id) as sessions,
+    count(distinct case when next_pageview_url is not null then website_session_id else null end) as w_next_pg,
+    count(distinct case when next_pageview_url is not null then website_session_id else null end)/count(distinct website_session_id) as pct_w_next_pg,
+    count(distinct case when next_pageview_url='/the-original-mr-fuzzy' then website_session_id else null end) as to_mrfuzzy,
+    count(distinct case when next_pageview_url='/the-original-mr-fuzzy' then website_session_id else null end)/count(distinct website_session_id) as pct_to_mrfuzzy,
+	count(distinct case when next_pageview_url='/the-forever-love-bear' then website_session_id else null end) as to_lovebear,
+    count(distinct case when next_pageview_url='/the-forever-love-bear' then website_session_id else null end)/count(distinct website_session_id) as pct_to_lovebear
+    from sessions_w_next_pageview_url
+    group by 1;
+
+
+-- Building product-level conversion funnels
+-- step 1: select all pageviews for relevant sessions
+-- step 2: figure out which pageview urls to look for
+-- step 3: pull all pageviews and identify the funnel steps
+-- step 4: create the session-level conversion funnel view
+-- step 5: aggregate the data to assess funnel performance
+
+--
+drop temporary table tbl1;
+create temporary table tbl1
+Select 
+	website_pageview_id,
+	website_session_id,
+    pageview_url as product_page_seen
+from website_pageviews
+where created_at>'2013-01-06' and created_at<'2013-04-10'
+and pageview_url in ('/the-original-mr-fuzzy','/the-forever-love-bear');
+
+-- finding the right pageview_urls to build the funnels
+select distinct website_pageviews.pageview_url
+from tbl1
+left join website_pageviews on website_pageviews.website_session_id=tbl1.website_session_id
+and website_pageviews.website_pageview_id>tbl1.website_pageview_id;
+
+
+-- we'll look at the inner query first to look over the pageview_level results
+-- then, turn it into a subquery and make it the summary with flags
+drop temporary table tbl2;
+create temporary table tbl2
+select 
+tbl1.website_session_id,
+tbl1.product_page_seen,
+    CASE WHEN pageview_url = '/cart' THEN 1 ELSE 0 END AS cart_page,
+    CASE WHEN pageview_url = '/shipping' THEN 1 ELSE 0 END AS shipping_page,
+    CASE WHEN pageview_url = '/billing-2' THEN 1 ELSE 0 END AS billing_page,
+    CASE WHEN pageview_url = '/thank-you-for-your-order' THEN 1 ELSE 0 END AS thankyou_page
+from tbl1
+left join website_pageviews on 
+	tbl1.website_session_id=website_pageviews.website_session_id 
+	and website_pageviews.website_pageview_id > tbl1.website_pageview_id;
+    
+
+drop temporary table tbl3;
+create temporary table tbl3
+select 
+	website_session_id,
+    case when product_page_seen='/the-original-mr-fuzzy' then 'mrfuzzy'
+		 when product_page_seen='/the-forever-love-bear' then 'lovebear'
+		 else 'uh..problem'
+    end as product_seen,
+    MAX(cart_page) AS cart_made_it,
+    MAX(shipping_page) AS shipping_made_it,
+    MAX(billing_page) AS billing_made_it,
+    MAX(thankyou_page) AS thankyou_made_it
+    from tbl2
+    group by 1,2;
+
+-- final output part 1
+Select 
+product_seen,
+count(distinct website_session_id) as sessions,
+COUNT(DISTINCT CASE WHEN cart_made_it = 1 THEN website_session_id ELSE NULL END) AS to_cart,
+COUNT(DISTINCT CASE WHEN shipping_made_it = 1 THEN website_session_id ELSE NULL END) AS to_shipping,
+COUNT(DISTINCT CASE WHEN billing_made_it = 1 THEN website_session_id ELSE NULL END) AS to_billing,
+COUNT(DISTINCT CASE WHEN thankyou_made_it = 1 THEN website_session_id ELSE NULL END) AS to_thankyou
+from tbl3
+group by product_seen;
+
+-- final output part 2
+Select 
+product_seen,
+  COUNT(DISTINCT CASE WHEN cart_made_it = 1 THEN website_session_id ELSE NULL END)/count(distinct website_session_id) AS product_page_click_rt,
+    COUNT(DISTINCT CASE WHEN shipping_made_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN cart_made_it = 1 THEN website_session_id ELSE NULL END) AS cart_click_rt,
+    COUNT(DISTINCT CASE WHEN billing_made_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN shipping_made_it = 1 THEN website_session_id ELSE NULL END) AS shipping_click_rt,
+    COUNT(DISTINCT CASE WHEN thankyou_made_it = 1 THEN website_session_id ELSE NULL END)/COUNT(DISTINCT CASE WHEN billing_made_it = 1 THEN website_session_id ELSE NULL END) AS billing_click_rt
+FROM tbl3
+GROUP BY 1;
+
+
+-- 
+-- Cross-selling & product protfolio analysis
+--
+select * from order_items;
+
 
 Select
-hr,
-round(avg(case when wkday=0 then sessions end),1) as mon,
-round(avg(case when wkday=1 then sessions end),1) as tue,
-round(avg(case when wkday=2 then sessions end),1) as wed,
-round(avg(case when wkday=3 then sessions end),1) as thu,
-round(avg(case when wkday=4 then sessions end),1) as fir,
-round(avg(case when wkday=5 then sessions end),1) as sat,
-round(avg(case when wkday=6 then sessions end),1) as sun
-from(
+orders.primary_product_id,
+count(distinct orders.order_id) as orders,
+count(distinct case when order_items.product_id=1 then orders.order_id else null end) as x_sell_prod1,
+count(distinct case when order_items.product_id=2 then orders.order_id else null end) as x_sell_prod2,
+count(distinct case when order_items.product_id=3 then orders.order_id else null end) as x_sell_prod3,
+count(distinct case when order_items.product_id=1 then orders.order_id else null end)/count(distinct orders.order_id) as x_sell_prod1_rt,
+count(distinct case when order_items.product_id=2 then orders.order_id else null end)/count(distinct orders.order_id) as x_sell_prod2_rt,
+count(distinct case when order_items.product_id=3 then orders.order_id else null end)/count(distinct orders.order_id) as x_sell_prod3_rt
+from orders
+	left join order_items on order_items.order_id=orders.order_id
+    and order_items.is_primary_item=0 -- cross sell only
+where orders.order_id between 10000 and 11000
+group by 1;
+
+
+-- cross-sell analysis
+drop TEMPORARY table tbl1;
+create TEMPORARY table tbl1
+select 
+	pageview_url,
+    website_pageview_id,
+    website_session_id,
+    case when created_at<'2013-09-25' then 'Pre_cross_sell'
+		 when created_at>='2013-09-25' then 'Post_cross_sell'
+         else 'uh oh .. check logic'
+         end as time_period
+from website_pageviews
+where created_at between '2013-08-25' and '2013-10-25'
+and pageview_url = '/cart';
+
+select 
+	distinct website_pageviews.pageview_url
+from tbl1
+left join website_pageviews
+on tbl1.website_session_id=website_pageviews.website_session_id
+and website_pageviews.website_pageview_id>=tbl1.website_pageview_id;
+
+drop TEMPORARY table tbl2;
+create TEMPORARY table tbl2
+select 
+    tbl1.website_session_id,
+    tbl1.time_period,
+    CASE WHEN website_pageviews.pageview_url = '/shipping' THEN 1 ELSE 0 END AS shipping_page
+from tbl1
+left join website_pageviews
+on tbl1.website_session_id=website_pageviews.website_session_id
+and website_pageviews.website_pageview_id>tbl1.website_pageview_id;
+
+
+drop TEMPORARY table tbl3;
+create TEMPORARY table tbl3
+select
+	tbl2.website_session_id,
+    tbl2.time_period,
+    orders.order_id,
+    orders.price_usd,
+    orders.items_purchased,
+	max(shipping_page) AS shipping_made_it
+    from tbl2
+	left join orders on orders.website_session_id=tbl2.website_session_id
+    group by 1,2,3,4,5;
+    
+
+select 
+time_period,
+count(distinct website_session_id) as cart_sessions,
+count(case when shipping_made_it=1 then website_session_id end) as clickthroughs,
+count(case when shipping_made_it=1 then website_session_id end)/count(distinct website_session_id) as cart_ctr,
+sum(items_purchased)/count(order_id), -- 这里一个sum 一个count
+AVG(price_usd) AS AOV, -- average product per oder
+sum(price_usd)/count(distinct website_session_id) as rev_per_cart_session
+from tbl3
+group by 1
+order by 1 desc; 
+
+-- simple version
+SELECT
+CASE
+WHEN website_pageviews.created_at < '2013-09-25' THEN 'A.Pre_Cross_Sell'
+WHEN website_pageviews.created_at >= '2013-09-25' THEN 'B.Post_Cross_Sell'
+ELSE 'logic_error'
+END AS time_period,
+COUNT(DISTINCT CASE WHEN website_pageviews.pageview_url ='/cart' THEN website_pageviews.website_session_id ELSE NULL END) AS cart_sessions,
+COUNT(DISTINCT CASE WHEN website_pageviews.pageview_url ='/shipping' THEN website_pageviews.website_session_id ELSE NULL END) AS clicktroughs,
+COUNT(DISTINCT CASE WHEN website_pageviews.pageview_url ='/shipping' THEN website_pageviews.website_session_id ELSE NULL END)/
+COUNT(DISTINCT CASE WHEN website_pageviews.pageview_url ='/cart' THEN website_pageviews.website_session_id ELSE NULL END) AS cart_crt,
+sum(orders.items_purchased)/COUNT(orders.order_id) AS products_per_order,
+AVG(orders.price_usd) AS AOV,
+SUM(CASE WHEN website_pageviews.pageview_url ='/cart' THEN orders.price_usd  ELSE NULL END)/
+COUNT(DISTINCT CASE WHEN website_pageviews.pageview_url ='/cart' THEN website_pageviews.website_session_id ELSE NULL END) AS rev_per_cart_sessions
+FROM website_pageviews
+LEFT JOIN orders
+ON website_pageviews.website_session_id = orders.website_session_id
+WHERE
+website_pageviews.created_at > '2013-08-25'
+AND website_pageviews.created_at < '2013-10-25'
+GROUP BY 1;
+
+
+-- Product Portfolio Expansion
+
+select 
+    case when ws.created_at<'2013-12-12' then 'Pre_birthday_bear'
+		 when ws.created_at>='2013-12-12' then 'Post_birthday_bear'
+         else 'uh oh .. check logic'
+         end as time_period,
+	count(distinct orders.order_id)/count(distinct ws.website_session_id) as conv_rate,
+    sum(orders.price_usd)/count(distinct orders.order_id) AS AOV,
+    -- avg(orders.price_usd),
+    sum(orders.items_purchased)/COUNT(distinct orders.order_id) AS products_per_order,
+	sum(orders.price_usd)/count(distinct ws.website_session_id) as revenue_per_session
+from website_sessions as ws
+left join orders
+on orders.website_session_id=ws.website_session_id
+where ws.created_at between '2013-11-12' and '2014-01-12'
+group by 1
+order by 2;
+
+
+-- 
+-- Analyzing product refund rates
+--
+
 Select 
-DATE(created_at) AS created_date,
-weekday(created_at) as wkday,
-HOUR(created_at) as hr,
-count(distinct website_session_id) as sessions
-FROM website_sessions 
-WHERE created_at between '2012-09-15' and '2012-11-15'
-group by 1,2,3
-) as daily_hourly_sessions
-group by daily_hourly_sessions.hr;
+order_items.order_id,
+order_items.order_item_id,
+order_items.price_usd as price_paid_usd,
+order_items.created_at,
+order_item_refunds.order_item_refund_id,
+order_item_refunds.refund_amount_usd,
+order_item_refunds.created_at
+from order_items
+left join order_item_refunds
+on order_items.order_item_id=order_item_refunds.order_item_id
+where order_items.order_id in (3489,32049,27061);
+
+-- Analyzing product refund rates
+Select 
+
+	year(order_items.created_at),
+    month(order_items.created_at),
+    count(case when product_id=1 then order_items.order_item_id end) as p1_orders,
+	count(case when product_id=1 then order_item_refunds.order_item_refund_id end)/count(case when product_id=1 then order_items.order_item_id end) as p1_refund_rt,
+    count(case when product_id=2 then order_items.order_item_id end) as p2_orders,
+    count(case when product_id=2 then order_item_refunds.order_item_refund_id end)/count(case when product_id=2 then order_items.order_item_id end) as p2_refund_rt,
+	count(case when product_id=3 then order_items.order_item_id end) as p3_orders,
+    count(case when product_id=3 then order_item_refunds.order_item_refund_id end)/count(case when product_id=3 then order_items.order_item_id end) as p3_refund_rt,
+    count(case when product_id=4 then order_items.order_item_id end) as p4_orders,
+    count(case when product_id=4 then order_item_refunds.order_item_refund_id end)/count(case when product_id=4 then order_items.order_item_id end) as p4_refund_rt
+    from order_items
+left join order_item_refunds
+on order_items.order_item_id=order_item_refunds.order_item_id
+where order_items.created_at<'2014-10-15'
+group by 1,2;
+
+
+-- 
+-- Analyzing repeat visit & purchase behavior
+-- 
+select
+	order_items.order_id,
+    order_items.order_item_id,
+    order_items.price_usd as price_paid_usd,
+    order_items.created_at,
+    order_item_refunds.order_item_refund_id,
+    order_item_refunds.refund_amount_usd,
+    order_item_refunds.created_at,
+    datediff(order_item_refunds.created_at,order_items.created_at) as days_order_to_refund
+from order_items
+	left join order_item_refunds
+    on order_item_refunds.order_item_id=order_items.order_item_id
+    where order_items.order_id in (3489,32049,27061);
+  
+-- identifying repeat visitors
+
+create temporary table sessions_w_repeats
+
+select 
+	new_sessions.user_id,
+    new_sessions.website_session_id as new_session_id,
+    website_sessions.website_session_id as repeat_session_id
+from 
+	(select
+    user_id, website_session_id
+    from website_sessions
+    where created_at <'2014-11-01' and created_at >='2014-01-01'
+    and is_repeat_session=0 -- new_sessions only
+    ) as new_sessions
+    left join  website_sessions
+    on website_sessions.user_id=new_sessions.user_id
+    and website_sessions.is_repeat_session=1 -- was a repeat session
+    and website_sessions.website_session_id > new_sessions.website_session_id
+    and website_sessions.created_at <'2014-11-01'
+    and website_sessions.created_at >= '2014-01-01';
+    
+select repeat_sessions,
+count(distinct user_id) as users
+from 
+(select user_id,
+count(distinct new_session_id) as new_sessions,
+count(distinct repeat_session_id) as repeat_sessions
+from sessions_w_repeats
+group by 1
+order by 3 desc) as user_level
+group by 1;
+
+-- Analyzing time to repeat
+
+drop temporary table sessions_w_repeats_for_time_diff;
+create temporary table sessions_w_repeats_for_time_diff
+
+select 
+	new_sessions.user_id,
+    new_sessions.website_session_id as new_session_id,
+    new_sessions.created_at as new_session_created_at,
+    website_sessions.website_session_id as repeat_session_id,
+    website_sessions.created_at as repeat_session_created_at
+from 
+	(select
+    user_id, website_session_id,created_at
+    from website_sessions
+    where created_at <'2014-11-01' and created_at >='2014-01-01'
+    and is_repeat_session=0 -- new_sessions only　
+    ) as new_sessions
+    left join  website_sessions
+    on website_sessions.user_id=new_sessions.user_id
+    and website_sessions.is_repeat_session=1 -- was a repeat session
+    and website_sessions.website_session_id > new_sessions.website_session_id
+    and website_sessions.created_at <'2014-11-03'
+	and website_sessions.created_at >= '2014-01-01';
+    
+
+select 
+user_id,new_session_id,new_session_created_at,
+min(repeat_session_id) as second_session_id,
+min(repeat_session_created_at) as second_session_created_at
+from sessions_w_repeats_for_time_diff
+where repeat_session_id is not null
+group by 1,2,3;
+
+SET GLOBAL TIME_ZONE = '-05:00';
+
+drop temporary table users_first_to_second;
+create temporary table users_first_to_second
+select user_id,
+datediff(second_session_created_at,new_session_created_at) as days_first_to_second_session
+from 
+(select 
+user_id,new_session_id,new_session_created_at,
+min(repeat_session_id) as second_session_id,
+min(repeat_session_created_at) as second_session_created_at
+from sessions_w_repeats_for_time_diff
+where repeat_session_id is not null
+group by 1,2,3) as first_second;
+
+select * from users_fist_to_second;
+
+Select 
+avg(days_first_to_second_session) as avg_days_first_to_second_session,
+min(days_first_to_second_session) as min_days_first_to_second_session,
+max(days_first_to_second_session) as max_days_first_to_second_session
+from users_first_to_second;
+
+
+Select
+CASE 
+	WHEN utm_source IS NULL AND http_referer IS NULL THEN 'direct_type_in'
+	WHEN utm_source IS NULL AND http_referer IN ('https://www.gsearch.com','https://www.bsearch.com') THEN 'organic'
+    WHEN utm_campaign = 'nonbrand' THEN 'paid_nonbrand'
+    WHEN utm_campaign = 'brand' THEN 'paid_brand'
+    when utm_source = 'socialbook'  then 'paid social'
+    END AS channel_group,
+count(CASE when is_repeat_session=0 then website_session_id else null end) as new_sessions,
+count(CASE when is_repeat_session=1 then website_session_id else null end) as repeat_sessions
+from website_Sessions
+where created_at<'2014-11-05' AND created_at >= '2014-01-01'
+group by 1
+order by 3 desc;
+
+-- Analyzing new&repeat conversion rates
+SELECT
+is_repeat_SESSION,
+COUNT(DISTINCT website_Sessions.website_session_id) AS sessions,
+COUNT(DISTINCT orders.order_id) AS orders,
+SUM(price_usd) AS total_revenue
+FROM website_Sessions
+LEFT JOIN orders
+ON orders.website_session_id=website_Sessions.website_session_id
+WHERE website_sessions.created_At <'2014-11-08'
+AND website_sessions.created_At >='2014-01-01'
+GROUP BY 1;
+
+
+
+
+
+
+
+
+
+
+
+
+
